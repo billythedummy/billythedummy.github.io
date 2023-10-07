@@ -1,2 +1,0 @@
-# billythedummy.github.io
-blog

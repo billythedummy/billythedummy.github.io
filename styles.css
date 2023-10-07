@@ -1,0 +1,70 @@
+@media (prefers-color-scheme: dark) {
+    body {
+        background-color: #202020;
+        color: white;
+    }
+
+    a {
+        color: lightblue;
+    }
+
+    a:visited {
+        color: lightpink;
+    }
+
+    a:active {
+        color: lightsalmon;
+    }
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+    font-family: Arial, Helvetica, sans-serif;
+    padding: 1rem;
+}
+
+hr {
+    width: 100%;
+}
+
+ol {
+    padding-left: 0;
+}
+
+li{
+    list-style-type: none;
+}
+
+#posts-ol > li {
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 1rem;
+    align-items: center;
+}
+
+#posts-ol > li > h3 {
+    font-weight: normal;
+}
+
+h3, h4 {
+    margin-bottom: 0.25rem;
+    margin-top: 0.25rem;
+}
+
+button {
+    /* remove default styles */
+    background: none;
+    border: none;
+    cursor: pointer;
+    outline: inherit;
+}
+
+button:hover {
+    border-radius: 50%;
+    background-color: gray;
+}
+
+*:focus {
+    outline: 4px solid cornflowerblue;
+}
