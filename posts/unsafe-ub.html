@@ -1,23 +1,272 @@
-<!DOCTYPE HTML>
+<!DOCTYPE html>
 <html>
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <link href="/styles.css" type="text/css" rel="stylesheet" />
-    <link href="/posts/posts.css" type="text/css" rel="stylesheet" />
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1, minimum-scale=1"
-    />
-    <title>Using Unsafe Rust? You're Probably Gonna Trigger Undefined Behaviour - billythedummy's silly diary</title>
-    <body>
-        <a href="/"><h1>billythedummy's silly diary</h1></a>
-        <hr />
-        <main>
-            <h2>Using Unsafe Rust? You're Probably Gonna Trigger Undefined Behaviour</h2>
-            <h3>TLDR: unsafe rust has many UB pitfalls, use
-                <a href="https://github.com/rust-lang/miri" target="_blank" rel="noopener noreferrer">miri</a>
-                to ensure you're not falling into any of them
-            </h3>
-            <p>Coming soon...</p>
-        </main>
-    </body>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <link href="/styles.css" type="text/css" rel="stylesheet" />
+  <link href="/posts/posts.css" type="text/css" rel="stylesheet" />
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/dark.min.css"
+  />
+  <script type="module">
+    import hljs from "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/es/highlight.min.js";
+    import rust from "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/es/languages/rust.min.js";
+    hljs.registerLanguage("rust", rust);
+    hljs.highlightAll();
+  </script>
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, minimum-scale=1"
+  />
+  <title>
+    Using Unsafe Rust? You'll Probably Trigger Undefined Behaviour -
+    billythedummy's silly diary
+  </title>
+  <body>
+    <a href="/"><h1>billythedummy's silly diary</h1></a>
+    <hr />
+    <main>
+      <h3 id="date-heading">2023/10/08</h3>
+      <h2>Using Unsafe Rust? You'll Probably Trigger Undefined Behaviour</h2>
+      <h3 id="subheading">
+        TLDR: unsafe rust has many UB pitfalls. Use
+        <a
+          href="https://github.com/rust-lang/miri"
+          target="_blank"
+          rel="noopener noreferrer"
+          >miri</a
+        >
+        to ensure you're not falling into any of them
+      </h3>
+      <p>
+        Inspired by
+        <a
+          href="https://tigerbeetle.com/blog/a-database-without-dynamic-memory/"
+          target="_blank"
+          rel="noopener noreferrer"
+          >TigerBeetle's design of no runtime memory allocations</a
+        >, I decided to build a zero runtime memory allocation data structure in
+        rust. It seemed like a least-recently-used (LRU) cache was a natural fit
+        for such a requirement, since they typically involve a fixed capacity,
+        beyond which the least-recently-used element was evicted to make room
+        for a new one. Furthermore, I had some needs for one in another project,
+        so all the stars were aligned to make
+        <a href="https://docs.rs/const-lru/latest/const_lru/"
+          ><code>const-lru</code></a
+        >
+        happen.
+      </p>
+      <p>
+        What the stars were not aligned on, however, was the amount of undefined
+        behaviour (UB) I would inadvertently introduce in the initial
+        development of <code>const-lru</code>.
+      </p>
+      <h4>Uninitialized memory is a UB minefield</h4>
+      <p>
+        Since the capacity of the LRU cache was designed to be fixed at
+        compile-time, I decided to store the required data in a couple of
+        const-generic array fields. In other words, something like:
+      </p>
+      <pre class="language-rust"><code>
+pub struct ConstLru&lt;K, V, const CAP: usize&gt; {
+    keys: [K; CAP],
+    values: [V; CAP],
+    ... // other fields
+}
+      </code></pre>
+      <p>
+        This was all fine and dandy for small values of <code>CAP</code>, but at
+        larger values, this was causing runtime stack overflows.
+        <code>Box::new(ConstLru::new())</code> did not help either because
+        semantically this meant "create a new <code>ConstLru</code> on the stack
+        and then move that <code>ConstLru</code> into a newly allocated region
+        in the heap", so the stack overflow still occurred in the first step.
+      </p>
+      <p>
+        Since I wanted to keep the crate
+        <code>no-std</code> and not dependent on <code>alloc</code>, I decided
+        to create a new <code>unsafe</code> function,
+        <code>init_at_alloc(ptr: *mut Self)</code>, to allow users to create
+        large <code>CAP</code> <code>ConstLru</code>s at pre-allocated memory.
+        This allows for stuff like:
+      </p>
+      <pre class="language-rust"><code>
+let layout = Layout::new::&lt;ConstLru&lt;u32, u16, 10_000, u16&gt;&gt;();
+let container: Box&lt;ConstLru&lt;u32, u16, 10_000, u16&gt;&gt; = unsafe {
+    let ptr = alloc(layout) as *mut ConstLru&lt;u32, u16, 10_000, u16&gt;;
+    ConstLru::init_at_alloc(ptr);
+    Box::from_raw(ptr)
+};
+      </code></pre>
+      <p>
+        I could then run a common init procedure for both stack and pointer
+        initializations in order to set the correct starting state for the
+        struct's fields. Surely a private <code>fn init(&mut self)</code>, where
+        the pointer initialization is:
+      </p>
+      <pre class="language-rust"><code>
+pub unsafe fn init_at_alloc(ptr: *mut Self) {
+    let mut_ref = &mut *ptr;
+    mut_ref.init();
+}
+      </code></pre>
+      <p>and the stack initialization is:</p>
+      <pre class="language-rust"><code>
+pub fn new() -> Self {
+    let mut res: MaybeUninit&lt;Self&gt; = MaybeUninit::uninit();
+    unsafe {
+        Self::init_at_alloc(res.as_mut_ptr());
+        res.assume_init()
+    }
+}
+      </code></pre>
+      <p>would work, right?</p>
+      <h4>Pointers may not always become references</h4>
+      <p>
+        WRONG! After digging a little deeper into the
+        <a
+          href="https://doc.rust-lang.org/std/mem/union.MaybeUninit.html"
+          target="_blank"
+          rel="noopener noreferrer"
+          >docs for <code>MaybeUninit</code></a
+        >, it turns out that
+        <strong>
+          <a
+            href="https://doc.rust-lang.org/std/mem/union.MaybeUninit.html#method.as_mut_ptr"
+            target="_blank"
+            rel="noopener noreferrer"
+            >turning a pointer into a reference before the memory pointed to is
+            initialized is undefined behaviour!</a
+          ></strong
+        >
+      </p>
+      <p>
+        Oh no. Naturally, I had to change the function signature from
+        <code>fn init(&mut self)</code> to <code>fn init(ptr: *mut Self)</code>,
+        which meant <code>init_at_alloc(ptr: *mut Self)</code> became the common
+        init procedure instead. It was kinda ugly changing all the
+        <code>self.field = init_value</code> to
+        <code>addr_of_mut!((*ptr).field).write(init_value)</code>, but it
+        worked.
+      </p>
+      <h4>
+        Always use <code>addr_of_mut!</code> to initialize uninitialized struct
+        fields
+      </h4>
+      <p>
+        The issue was resolved but the experience left me distraught. Rust, for
+        all its virtues of stringent compile-time checking had failed to save me
+        from myself. Besides, how many more instances of UB were left in my
+        code? Surely there was a way to detect and fix them without going
+        through the docs of every <code>unsafe</code> feature I was using.
+      </p>
+      <h4>Just use miri</h4>
+      <p>
+        Thankfully, there was. After some googling, I found out about
+        <a
+          href="https://github.com/rust-lang/miri"
+          target="_blank"
+          rel="noopener noreferrer"
+          >miri</a
+        >, and it immediately proved to be a godsend. Here are some other
+        instances of UB it caught:
+      </p>
+      <h4>
+        Once you <code>assume_init()</code>, all fields MUST be initialized
+      </h4>
+      <p>
+        In order to speed up the lookup process, <code>ConstLru</code> keeps a
+        binary search index array as one of its fields, <code>bs_index</code>.
+        Since the array consists of primitive unsigned integer values, I decided
+        not to encapsulate the values in a <code>MaybeUninit</code>. As the
+        program does not ever use any values in the array without initializing
+        them, I thought it was fine to leave the field uninitialized when the
+        <code>ConstLru</code> was created. After all, it was just a bunch of
+        unused random integers. However, this is UB according to miri:
+      </p>
+      <pre class="language-rust"><code>
+  error: Undefined Behavior: constructing invalid value at .value.bs_index[11]: encountered uninitialized bytes
+  --> /home/user/const-lru/src/lib.rs:72:13
+   |
+72 |             res.assume_init()
+   |             ^^^^^^^^^^^^^^^^^ constructing invalid value at .value.bs_index[11]: encountered uninitialized bytes
+      </code></pre>
+      <p>
+        In hindsight, this is perfectly reasonable UB, since the compiler does
+        not, and probably should not, treat primitive integers as a special case
+        for allowing uninitialized fields; imagine what would happen if instead
+        of a primitive integer, this was some other type with complex
+        <code>Drop</code> behaviour like <code>Vec</code>. If this wasn't UB,
+        the compiler will generate code that attempts to free memory at random
+        addresses read from the uninitialized bytes!
+      </p>
+      <p>
+        The fix for this UB was simple: just initialize the values. Though this
+        does introduce some overhead at initialization.
+      </p>
+      <h4>
+        <code>&array[i]</code> and <code>&mut array[i]</code> only borrows the
+        single i-th element of the array
+      </h4>
+      <p>
+        The above statement sounds obvious, so how can it result in UB? Well,
+        what if you wanted to use <code>ptr::copy()</code> to shift an array by
+        1 element, like in <code>Vec::remove()</code>?
+      </p>
+      <pre class="language-rust"><code>
+// shift everything between [bs_i, len) right
+let bs_i_ptr: *mut I = &mut self.bs_index[bs_i];
+unsafe {
+    ptr::copy(bs_i_ptr, bs_i_ptr.add(1), len - bs_i);
+}
+      </code></pre>
+      <p>
+        <code>bs_i_ptr</code> only mutably borrows
+        <code>self.bs_index[bs_i]</code>. However, the
+        <code>ptr::copy()</code> is attempting to mutate not
+        <code>self.bs_index[bs_i]</code> but
+        <code>self.bs_index[bs_i+1..len+1]</code> instead! miri catches this:
+      </p>
+      <pre class="language-rust"><code>
+  error: Undefined Behavior: attempting a write access using <154249> at alloc50498[0x1c], but that tag does not exist in the borrow stack for this location
+  --> /home/user/const-lru/src/lib.rs:348:17
+    |
+348 |                 ptr::copy(bs_i_ptr, bs_i_ptr.add(1), l - bs_i);
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |                 |
+    |                 attempting a write access using <154249> at alloc50498[0x1c], but that tag does not exist in the borrow stack for this location
+    |                 this error occurs as part of an access at alloc50498[0x1c..0x1d]
+      </code></pre>
+      <p>
+        Admittedly, this is not immediately obvious since the multiple writes
+        are somewhat obscured by the <code>ptr::copy()</code> call. I only
+        understood the miri error message after chancing upon
+        <a
+          href="https://users.rust-lang.org/t/question-about-provenance/99055/2"
+          target="_blank"
+          rel="noopener noreferrer"
+          >this rust forum post</a
+        >
+      </p>
+      <p>
+        The "fix" for this UB wasn't really a fix. Since
+        <code>ptr::copy()</code> is inherently an unsafe function, it makes
+        sense to just express the procedure using fully unsafe types, i.e.
+        pointers instead of references:
+      </p>
+      <pre class="language-rust"><code>
+// shift everything between [bs_i, len) right
+unsafe {
+    let bs_i_ptr = self.bs_index.as_mut_ptr().add(bs_i);
+    ptr::copy(bs_i_ptr, bs_i_ptr.add(1), len - bs_i);
+}
+      </code></pre>
+      <h4>Conclusion</h4>
+      <p>
+        Rust is a safe language but unsafe rust is a totally different beast.
+        Undefined behaviour abounds when you're dealing with raw pointers and
+        uninitialized memory, but somebody has to do it to create the nice safe
+        APIs. Luckily, miri makes avoiding unintentional UB a lot easier.
+      </p>
+    </main>
+  </body>
 </html>
