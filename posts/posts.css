@@ -5,3 +5,9 @@
 #date-heading {
   font-weight: normal;
 }
+
+.post-inline-img {
+  margin: auto;
+  display: block;
+  max-width: 100%;
+}

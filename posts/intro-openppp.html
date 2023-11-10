@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <link href="/styles.css" type="text/css" rel="stylesheet" />
+  <link href="/posts/posts.css" type="text/css" rel="stylesheet" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, minimum-scale=1"
+  />
+  <title>
+    Introducing OpenPPP: a free web platform for hosting and prototyping image
+    processing apps- billythedummy's silly diary
+  </title>
+  <body>
+    <a href="/"><h1>billythedummy's silly diary</h1></a>
+    <hr />
+    <main>
+      <h3 id="date-heading">2023/10/24</h3>
+      <h2>
+        Introducing OpenPPP: a free web platform for hosting and prototyping
+        image processing apps
+      </h2>
+      <h3 id="subheading">
+        TLDR:
+        <a
+          href="https://openppp-app.vercel.app/"
+          target="_blank"
+          rel="noopener noreferrer"
+          >OpenPPP</a
+        >
+        is a simple
+        <a
+          href="https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Progressive Web App (PWA)</a
+        >
+        that allows anyone to quickly create, use, and share image-processing
+        plugins written in JavaScript.
+      </h3>
+      <p>
+        I recently started tracking all my expenses for tax deduction claims.
+        Since my country's tax laws requires clear records of everything -
+        receipts, purposes, etc, this naturally became a giant PITA. For every
+        item I want recorded, I had to snap a photo of the receipt, upload it
+        onto Google Drive, and then manually enter the item description, date,
+        amount and purpose into a Google Sheet.
+      </p>
+      <p>
+        <em>Wait a second</em>, I thought.
+        <em
+          >Doesn't Google provide APIs for doing all this? What if I made
+          something that did all this for me so that I just had to snap a photo
+          of the receipt and it'll handle the rest for me?</em
+        >
+      </p>
+      <p>
+        At that moment I also had a second realization. Many mobile apps have
+        the same user flow of:
+      </p>
+      <ul>
+        <li>
+          User takes a photo with their camera or uploads one from their gallery
+        </li>
+        <li>App processes it and something happens</li>
+      </ul>
+      <p>
+        Examples of such apps include QR code scanners, flower species
+        recognizers, CamScanner, Instagram stories... just to name a few.
+      </p>
+      <p>
+        So, what if I made a general platform that allows anyone to create such
+        an app?
+      </p>
+      <p>
+        What if this platform just did all the boilerplate work of connecting to
+        the device camera or image gallery + providing a UI, but left the image
+        processing part open and customizable? This way, devs can just focus on
+        the core image processing functionality for their individual use-cases.
+      </p>
+      <p>
+        Want to build an expense tracker? Just write the code that uploads the
+        captured image of a receipt and its details onto Google Drive as a image
+        processing plugin for the platform.
+      </p>
+      <p>
+        On the user-end, such a platform would provide users with a common,
+        convenient access point to a collection of such apps: one moment I could
+        be running OCR on a scanned document and in the next, I could be
+        scanning a QR code. I simply need to switch between the plugins I'm
+        using. No separate app installations or site redirects required.
+      </p>
+      <p><strong>And thus OpenPPP was born.</strong></p>
+      <p>
+        Having been hacked together over a single weekend, OpenPPP is currently
+        a PWA with minimal design. The main screen consists of a live camera
+        preview, as well as the controls required to capture/upload the image
+        and select which plugin to run on the captured image.
+      </p>
+      <img
+        src="/assets/intro-openppp-main.jpg"
+        alt="OpenPPP main screen"
+        class="post-inline-img"
+      />
+      <p>
+        The hamburger menu on the top left hand corner reveals a
+        <a
+          href="https://openppp-app.vercel.app/plugins.html"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Saved Plugins page</a
+        >
+        that allows you to save multiple plugins to localStorage.
+      </p>
+      <img
+        src="/assets/intro-openppp-saved-plugins.jpg"
+        alt="OpenPPP Saved Plugins screen"
+        class="post-inline-img"
+      />
+      <p>
+        This is currently the main way of plugin distribution: users paste the
+        plugin code written by the plugin author into a newly created plugin on
+        this page in order to use it.
+      </p>
+      <p>
+        Alternatively, since OpenPPP plugins are simply ES modules, users can
+        also run plugins using an external script URL.
+      </p>
+      <img
+        src="/assets/intro-openppp-plugin-url.jpg"
+        alt="OpenPPP plugin URL option selected"
+        class="post-inline-img"
+      />
+      <h4>Plugin API</h4>
+      <p>
+        If you're looking to write some plugins, the API is documented in the
+        <a
+          target="_blank"
+          rel="noopener noreferrer"
+          href="https://github.com/billythedummy/openppp#plugins"
+          >repo's README</a
+        >. It's very simple - in the ES module that you'll write, you just need
+        to define a function that takes an image file as argument, and then emit
+        a custom event with that function.
+      </p>
+      <p>
+        Minimal examples are also available for reference in the
+        <a
+          target="_blank"
+          rel="noopener noreferrer"
+          href="https://github.com/billythedummy/openppp/tree/master/examples"
+          >repo's examples folder</a
+        >
+      </p>
+      <h4>Final remarks</h4>
+      <p>
+        While JavaScript is often not the best choice for computer vision and
+        image processing, the use of web technologies allows OpenPPP to be
+        universally accessible. I hope that OpenPPP can enable devs to quickly
+        prototype image processing apps, or maybe even host a variety of
+        creative and useful ones for some audience in the future. You can try it
+        out today at
+        <a
+          target="_blank"
+          rel="noopener noreferrer"
+          href="https://openppp-app.vercel.app/"
+          >https://openppp-app.vercel.app/</a
+        >
+      </p>
+      <p>
+        Stay tuned for the next post where I detail how I built the
+        expense-tracking plugin.
+      </p>
+    </main>
+  </body>
+</html>
