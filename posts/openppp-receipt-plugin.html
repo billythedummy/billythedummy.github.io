@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <link href="/styles.css" type="text/css" rel="stylesheet" />
+    <link href="/posts/posts.css" type="text/css" rel="stylesheet" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/dark.min.css"
+    />
+    <script type="module">
+      import hljs from "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/es/highlight.min.js";
+      import js from "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/es/languages/javascript.min.js";
+      hljs.registerLanguage("js", js);
+      hljs.highlightAll();
+    </script>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, minimum-scale=1"
+    />
+    <title>
+      Building an Expense Tracking OpenPPP Plugin - billythedummy's silly diary
+    </title>
+    <!-- Matomo -->
+    <script>
+      var _paq = (window._paq = window._paq || []);
+      /* tracker methods like "setCustomDimension" should be called before "trackPageView" */
+      _paq.push(["trackPageView"]);
+      _paq.push(["enableLinkTracking"]);
+      (function () {
+        var u = "//blue-silence-6088.fly.dev/";
+        _paq.push(["setTrackerUrl", u + "matomo.php"]);
+        _paq.push(["setSiteId", "2"]);
+        var d = document,
+          g = d.createElement("script"),
+          s = d.getElementsByTagName("script")[0];
+        g.async = true;
+        g.src = u + "matomo.js";
+        s.parentNode.insertBefore(g, s);
+      })();
+    </script>
+    <!-- End Matomo Code -->
+  </head>
+  <body>
+    <a href="/"><h1>billythedummy's silly diary</h1></a>
+    <hr />
+    <main>
+      <h3 id="date-heading">2023/11/14</h3>
+      <h2>Building an Expense Tracking OpenPPP Plugin</h2>
+      <h3 id="subheading">
+        TLDR: I built a simple
+        <a
+          href="https://openppp-app.vercel.app/"
+          target="_blank"
+          rel="noopener noreferrer"
+          >OpenPPP</a
+        >
+        plugin that uploads photos of receipts onto Google Drive and updates a
+        Google Sheet with their details for the purpose of expense tracking. The
+        plugin code is available below at the end of the article.
+      </h3>
+      <h5>
+        This is a follow-up post to the
+        <a
+          target="_blank"
+          rel="noopener noreferrer"
+          href="/posts/intro-openppp.html"
+          >intro to OpenPPP post</a
+        >. Please read it first to get an overview of OpenPPP if you're
+        unfamiliar with it.
+      </h5>
+      <p>
+        Having hacked together the initial version of OpenPPP, it was time to
+        dogfood it with the expense-tracking use-case mentioned in the previous
+        post.
+      </p>
+      <p>
+        The requirements for the plugin are straightforward: given a photo of a
+        receipt, it should upload it onto the Google Drive folder where I save
+        all photos of receipts, as well as update my bookkeeping Google Sheet
+        with the receipt's purchase item, expenditure amount, date and
+        expenditure category.
+      </p>
+      <p>
+        My initial idea was to do some fancy OCR to automatically extract the
+        receipt's total, date and maybe even infer the expenditure category.
+        However, after trying out
+        <a
+          target="_blank"
+          rel="noopener noreferrer"
+          href="https://tesseract.projectnaptha.com/"
+          >Tesseract.js</a
+        >
+        on a few sample images via a
+        <a
+          target="_blank"
+          rel="noopener noreferrer"
+          href="https://github.com/billythedummy/openppp/blob/master/examples/tesseractOcr.mjs"
+          >simple test plugin</a
+        >, it seemed like it only worked well when the text in the image was
+        perfectly aligned and binarized to black and white. I also ran into some
+        issues trying to get opencv.js to work - see comments in the example
+        tesseract example plugin, so I couldn't use it for pre-processing the
+        image to get it into the optimal conditions.
+      </p>
+      <p>
+        Okay, forget OCR, let's just get the basic stuff done first. I'll just
+        create a HTML form to allow the user (me) to fill in these details
+        manually. Let's figure out the Google APIs next.
+      </p>
+      <h4>Setting Up Google Cloud</h4>
+      <p>
+        After reading some of Google's dev docs, I learnt that you needed a
+        Google Cloud project to be able to use the Google Sheets and Google
+        Drive APIs. And so I used the cloud console UI to manually enable the 2
+        APIs in a new project, and then create an API key that has the
+        permission to use them.
+        <img
+          src="/assets/openppp-expense-gconsole.png"
+          alt="Google Console Screenshot"
+          class="post-inline-img"
+        />
+      </p>
+      <h4>GAPI, GSI, GIS</h4>
+      <p>
+        These stand for <strong>Google API</strong>,
+        <strong>Google Sign-In</strong> and
+        <strong>Google Identity Services</strong>
+        respectively. After reading the
+        <a
+          target="_blank"
+          rel="noopener noreferrer"
+          href="https://developers.google.com/drive/api/quickstart/js"
+          >Google js quickstart</a
+        >
+        multiple times, I finally got a rough idea of how it all worked.
+      </p>
+      <p>Basically:</p>
+      <ol>
+        <li>
+          The
+          <a
+            target="_blank"
+            rel="noopener noreferrer"
+            href="https://accounts.google.com/gsi/client"
+            >GIS script</a
+          >
+          sets up GIS by defining global variable <code>window.google</code>
+        </li>
+        <li>
+          The
+          <a
+            target="_blank"
+            rel="noopener noreferrer"
+            href="https://apis.google.com/js/api.js"
+            >GAPI script</a
+          >
+          sets up GAPI by defining global variable <code>window.gapi</code>
+        </li>
+        <li>
+          OAuth 2.0 access token is requested from GIS by calling
+          <code>window.google.accounts.oauth2.initTokenClient</code> with the
+          <a
+            target="_blank"
+            rel="noopener noreferrer"
+            href="https://developers.google.com/identity/oauth2/web/guides/get-google-api-clientid"
+            >project's client ID</a
+          >
+          and the required scopes (in this case, Drive + Sheets). This creates a
+          "Sign in to Google" pop-up followed by a dialog requesting for the
+          required scope's permissions.
+        </li>
+        <li>
+          Use <code>window.gapi.client</code> to make the required API calls to
+          Drive and Sheets, attaching the access token to requests for
+          authentication.
+        </li>
+      </ol>
+      <p>
+        Combine this with some DOM manipulation code to create the form for
+        manual entry of expense details and that's basically the entire plugin!
+      </p>
+      <img
+        src="/assets/openppp-expense-example-receipt.jpg"
+        alt="Plugin capturing a receipt"
+        class="post-inline-img"
+      />
+      <h4>Other Notes</h4>
+      <p>Some other stuff to take note of about the plugin:</p>
+      <ul>
+        <li>
+          Since both Google scripts are CommonJS, I tried to just paste the
+          required libraries in to run them, which is why you will find the
+          entire GAPI code in the source below. However, due to the GIS script
+          not being able to run in strict mode, it's currently loaded by way of
+          an injected script tag.
+        </li>
+        <li>
+          Since the access token can be reused, I cache it in localStorage along
+          with its expiry time, only re-requesting it if required.
+        </li>
+        <li>
+          GAPI needs to be initialized with the discovery docs of the Google
+          Services you want to use.
+        </li>
+        <li>
+          If your Google Cloud project's app is not published, you will see an
+          additional warning about it during the GIS login.
+        </li>
+      </ul>
+      <h4>The Plugin</h4>
+      <p>
+        As promised, the entire plugin is below, ready to be copied and pasted
+        into your OpenPPP saved plugins. You'll need to change the secrets at
+        the top of the file to those specific to your Google Cloud and Drive
+        configuration before use. You can also change the form generated and the
+        Google Drive column values to suit your own format.
+      </p>
+      <button
+        style="font-size: large"
+        onclick="window.navigator.clipboard.writeText(document.getElementById('plugin-code').innerText)"
+      >
+        Click Me To Copy Plugin
+      </button>
+      <pre
+        class="language-js"
+      ><code style="max-height: 500px;" id="plugin-code">
+/* SECRETS */
+const GAPI_KEY = &quot;&lt;REPLACE-ME&gt;&quot;;
+const CLIENT_ID = &quot;&lt;REPLACE-ME&gt;&quot;;
+const SPREADSHEET_ID = &quot;&lt;REPLACE-ME&gt;&quot;;
+const GDRIVE_RECEIPTS_FOLDER_ID = &quot;&lt;REPLACE-ME&gt;&quot;;
+
+const SCOPES = &quot;https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets&quot;;
+
+/**
+  * 
+  * @param {string} val 
+  * @returns {HTMLOptionElement}
+  */
+function createCategoryOption(val) {
+  const res = document.createElement(&quot;option&quot;);
+  res.value = val;
+  res.innerText = val;
+  return res;
+}
+
+/**
+  * 
+  * @param {HTMLElement} elem 
+  * @param {string} label
+  * @returns {HTMLLabelElement}
+  */
+function encapsInLabel(elem, label) {
+  const res = document.createElement(&quot;label&quot;);
+  res.style.marginBottom = &quot;10px&quot;;
+  res.style.display = &quot;flex&quot;;
+
+  const span = document.createElement(&quot;span&quot;);
+  span.innerText = `${label}: `;
+  span.style.display = &quot;block&quot;;
+
+  elem.style.display = &quot;block&quot;;
+  elem.style.flex = &quot;1 1 0%&quot;;
+
+  res.appendChild(span);
+  res.appendChild(elem);
+
+  return res;
+}
+
+/**
+  * @returns {HTMLFormElement}
+  */
+function createForm() {
+  const form = document.createElement(&quot;form&quot;);
+
+  form.style.display = &quot;flex&quot;;
+  form.style.flexDirection = &quot;column&quot;;
+
+  const date = document.createElement(&quot;input&quot;);
+  date.name = &quot;date&quot;;
+  date.type = &quot;date&quot;;
+  date.value = new Date().toLocaleDateString(&quot;sv-SE&quot;);
+  form.appendChild(encapsInLabel(date, &quot;date&quot;));
+
+  const description = document.createElement(&quot;input&quot;);
+  description.name = &quot;description&quot;;
+  description.type = &quot;text&quot;;
+  form.appendChild(encapsInLabel(description, &quot;description&quot;));
+
+  const expenses = document.createElement(&quot;input&quot;);
+  expenses.name = &quot;expenses&quot;;
+  expenses.type = &quot;number&quot;;
+  expenses.step = &quot;0.01&quot;;
+  form.appendChild(encapsInLabel(expenses, &quot;expenses&quot;));
+
+  const category = document.createElement(&quot;select&quot;);
+  category.name = &quot;category&quot;
+  for (const val of [&quot;Sale&quot;, &quot;COGS&quot;, &quot;CapEx&quot;, &quot;Staff Welfare&quot;]) {
+    const option = createCategoryOption(val);
+    category.appendChild(option);
+  }
+  form.appendChild(encapsInLabel(category, &quot;category&quot;));
+
+  const submitBtn = document.createElement(&quot;button&quot;);
+  submitBtn.type = &quot;submit&quot;;
+  submitBtn.innerText = &quot;submit&quot;;
+  form.appendChild(submitBtn);
+
+  return form;
+}
+
+/**
+  * 
+  * @returns {Promise&lt;FormData&gt;}
+  */
+function createAndShowDialog() {
+  const dialog = document.createElement(&quot;dialog&quot;);
+
+  const form = createForm();
+  dialog.appendChild(form);
+
+  return new Promise((resolve, reject) =&gt; {
+    const cleanupDialog = () =&gt; {
+      // try catch all to prevent firing twice (once by onclose, once by click to close) from throwing errors
+      try {
+        dialog.close();
+        document.body.removeChild(dialog);
+      } catch (e) {
+        console.log(&quot;dialog E: &quot;, e);
+      }
+    }
+
+    form.onsubmit = (e) =&gt; {
+      e.preventDefault();
+      cleanupDialog();
+      resolve(new FormData(form));
+    }
+
+    const cleanupDialogReject = () =&gt; {
+      cleanupDialog();
+      reject(new Error(&quot;form dialog closed&quot;));
+    }
+
+    dialog.onclose = cleanupDialogReject;
+    const clickToCloseWindowListener = (event) =&gt; {
+      if (event.target &amp;&amp; event.target === dialog) {
+        window.removeEventListener(&quot;click&quot;, clickToCloseWindowListener);
+        cleanupDialogReject();
+      }
+    };
+
+    window.addEventListener(&quot;click&quot;, clickToCloseWindowListener);
+    document.body.appendChild(dialog);
+    dialog.showModal();
+  });
+}
+
+/**
+  * 
+  * @returns {Promise&lt;any&gt;}
+  */
+async function loadGapi() {
+  const loadPromise = new Promise((resolve) =&gt; {
+    // @ts-ignore
+    window.gapi.load(&quot;client&quot;, resolve);
+  });
+  await loadPromise;
+  // @ts-ignore
+  const client = window.gapi.client;
+  await client.init({
+    apiKey: GAPI_KEY,
+    discoveryDocs: [&quot;https://www.googleapis.com/discovery/v1/apis/drive/v3/rest&quot;, &quot;https://sheets.googleapis.com/$discovery/rest?version=v4&quot;],
+  });
+  return client;
+}
+
+/**
+  * 
+  * @param {number} ms 
+  * @returns {Promise&lt;void&gt;}
+  */
+function sleep(ms) {
+  return new Promise(resolve =&gt; { setTimeout(resolve, ms); });
+}
+
+/**
+  * https://accounts.google.com/gsi/client is a pile of cjs
+  * that can't run in strict mode due to some undefined variables
+  * @returns {Promise&lt;void&gt;}
+  */
+function loadGis() {
+  // @ts-ignore
+  if (window.google) {
+    return Promise.resolve();
+  }
+  const script = document.createElement(&quot;script&quot;);
+  script.src = &quot;https://accounts.google.com/gsi/client&quot;;
+  script.id = &quot;tempgsiscript&quot;;
+  document.body.appendChild(script);
+
+  return new Promise(async (resolve, reject) =&gt; {
+    for (let i = 0; i &lt; 100; i++) {
+      // @ts-ignore
+      if (window.google) {
+        document.body.removeChild(script);
+        resolve();
+        return;
+      }
+      await sleep(100);
+    }
+    reject(&quot;timeout waiting for google&quot;);
+  })
+}
+
+/**
+  * @returns {Promise&lt;string&gt;}
+  */
+function loadToken() {
+  const expiryTimeLocalStorageKey = &quot;gisexpirytime&quot;;
+  const localStorageKey = &quot;gisaccesstoken&quot;;
+  const savedExpiry = window.localStorage.getItem(expiryTimeLocalStorageKey);
+  if (savedExpiry) {
+    try {
+      const expiryTimestamp = Number.parseInt(savedExpiry);
+      if (Date.now() &lt; expiryTimestamp) {
+        const saved = window.localStorage.getItem(localStorageKey);
+        if (!saved) {
+          throw new Error(&quot;expiry exists but saved doesnt&quot;);
+        }
+        return Promise.resolve(saved);
+      }
+    } catch (e) {
+      console.error(&quot;saved&quot;, e);
+    }
+  }
+  // saved token doesnt exist or expired, re-request
+  window.localStorage.removeItem(expiryTimeLocalStorageKey);
+  window.localStorage.removeItem(localStorageKey);
+  return new Promise((resolve, reject) =&gt; {
+    // @ts-ignore
+    const tokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPES,
+      callback: ({ access_token, expires_in }) =&gt; {
+        window.localStorage.setItem(expiryTimeLocalStorageKey, (Date.now() + expires_in * 1000).toString());
+        window.localStorage.setItem(localStorageKey, access_token);
+        resolve(access_token);
+      },
+      error_callback: (e) =&gt; {
+        console.error(&quot;GIS&quot;, e);
+        reject(e);
+      },
+    });
+    tokenClient.requestAccessToken();
+  });
+}
+
+/**
+  * 
+  * @param {any} client 
+  * @param {FormData} formData 
+  */
+async function writeGSheets(client, formData) {
+  const { result: { values } } = await client.sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: &quot;Main!B:B&quot;
+  });
+  let ct = 0;
+  while (values[ct] &amp;&amp; values[ct][0] != &quot;&quot;) {
+    ct++;
+  }
+  const row = ct + 1;
+  // @ts-ignore
+  const day = new Date(formData.get(&quot;date&quot;)).getDate();
+  const description = formData.get(&quot;description&quot;);
+  const expenses = formData.get(&quot;expenses&quot;);
+  const category = formData.get(&quot;category&quot;);
+  const toWrite = [[day, description, &quot;&quot;, expenses, category]];
+
+  await client.sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `Main!B${row}:F${row}`,
+    valueInputOption: &quot;USER_ENTERED&quot;,
+    resource: {
+      values: toWrite,
+    }
+  });
+}
+
+/**
+  * 
+  * @param {any} client
+  * @param {File} file 
+  * @param {string} fileName 
+  */
+async function uploadReceiptImage(client, file, fileName) {
+  const fileMetadata = {
+    name: fileName,
+    mimeType: file.type,
+    parents: [GDRIVE_RECEIPTS_FOLDER_ID],
+  };
+  const form = new FormData();
+  form.append(&quot;metadata&quot;, new Blob([JSON.stringify(fileMetadata)], { type: 'application/json' }));
+  form.append(&quot;file&quot;, file);
+
+  const token = client.getToken().access_token;
+  const res = await fetch(
+    &quot;https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&amp;supportsAllDrives=true&quot;,
+    {
+      method: &quot;POST&quot;,
+      headers: new Headers({ Authorization: `Bearer ${token}` }),
+      body: form,
+    }
+  );
+  if (!res.ok) {
+    const errTxt = await res.text();
+    throw new Error(errTxt);
+  }
+}
+
+/** @type {OpenPPPHandler} */
+async function main(image) {
+  const [formData, client] = await Promise.all([
+    createAndShowDialog(),
+    loadGapi(),
+    loadGis(),
+  ]);
+  const token = await loadToken();
+  client.setToken({ access_token: token });
+
+  const imgName = `${formData.get(&quot;date&quot;)} ${formData.get(&quot;description&quot;)}`;
+  await Promise.all([
+    uploadReceiptImage(client, image, imgName),
+    writeGSheets(client, formData),
+  ]);
+}
+
+/* START GAPI */
+(function () {
+  var aa = function (a) { var b = 0; return function () { return b &lt; a.length ? { done: !1, value: a[b++] } : { done: !0 } } }, g = &quot;function&quot; == typeof Object.defineProperties ? Object.defineProperty : function (a, b, c) { if (a == Array.prototype || a == Object.prototype) return a; a[b] = c.value; return a }, ea = function (a) {
+    a = [&quot;object&quot; == typeof globalThis &amp;&amp; globalThis, a, &quot;object&quot; == typeof window &amp;&amp; window, &quot;object&quot; == typeof self &amp;&amp; self, &quot;object&quot; == typeof global &amp;&amp; global]; for (var b = 0; b &lt; a.length; ++b) { var c = a[b]; if (c &amp;&amp; c.Math == Math) return c } throw Error(&quot;Cannot find global object&quot;);
+  }, fa = ea(this), h = function (a, b) { if (b) a: { var c = fa; a = a.split(&quot;.&quot;); for (var d = 0; d &lt; a.length - 1; d++) { var e = a[d]; if (!(e in c)) break a; c = c[e] } a = a[a.length - 1]; d = c[a]; b = b(d); b != d &amp;&amp; null != b &amp;&amp; g(c, a, { configurable: !0, writable: !0, value: b }) } };
+  h(&quot;Symbol&quot;, function (a) { if (a) return a; var b = function (f, k) { this.B = f; g(this, &quot;description&quot;, { configurable: !0, writable: !0, value: k }) }; b.prototype.toString = function () { return this.B }; var c = &quot;jscomp_symbol_&quot; + (1E9 * Math.random() &gt;&gt;&gt; 0) + &quot;_&quot;, d = 0, e = function (f) { if (this instanceof e) throw new TypeError(&quot;Symbol is not a constructor&quot;); return new b(c + (f || &quot;&quot;) + &quot;_&quot; + d++, f) }; return e });
+  h(&quot;Symbol.iterator&quot;, function (a) { if (a) return a; a = Symbol(&quot;Symbol.iterator&quot;); for (var b = &quot;Array Int8Array Uint8Array Uint8ClampedArray Int16Array Uint16Array Int32Array Uint32Array Float32Array Float64Array&quot;.split(&quot; &quot;), c = 0; c &lt; b.length; c++) { var d = fa[b[c]]; &quot;function&quot; === typeof d &amp;&amp; &quot;function&quot; != typeof d.prototype[a] &amp;&amp; g(d.prototype, a, { configurable: !0, writable: !0, value: function () { return ha(aa(this)) } }) } return a });
+  var ha = function (a) { a = { next: a }; a[Symbol.iterator] = function () { return this }; return a }, ia = function (a, b, c) { if (null == a) throw new TypeError(&quot;The 'this' value for String.prototype.&quot; + c + &quot; must not be null or undefined&quot;); if (b instanceof RegExp) throw new TypeError(&quot;First argument to String.prototype.&quot; + c + &quot; must not be a regular expression&quot;); return a + &quot;&quot; };
+  h(&quot;String.prototype.endsWith&quot;, function (a) { return a ? a : function (b, c) { var d = ia(this, b, &quot;endsWith&quot;); b += &quot;&quot;; void 0 === c &amp;&amp; (c = d.length); c = Math.max(0, Math.min(c | 0, d.length)); for (var e = b.length; 0 &lt; e &amp;&amp; 0 &lt; c;)if (d[--c] != b[--e]) return !1; return 0 &gt;= e } }); var ja = function (a, b) { a instanceof String &amp;&amp; (a += &quot;&quot;); var c = 0, d = !1, e = { next: function () { if (!d &amp;&amp; c &lt; a.length) { var f = c++; return { value: b(f, a[f]), done: !1 } } d = !0; return { done: !0, value: void 0 } } }; e[Symbol.iterator] = function () { return e }; return e };
+  h(&quot;Array.prototype.entries&quot;, function (a) { return a ? a : function () { return ja(this, function (b, c) { return [b, c] }) } }); h(&quot;Object.is&quot;, function (a) { return a ? a : function (b, c) { return b === c ? 0 !== b || 1 / b === 1 / c : b !== b &amp;&amp; c !== c } }); h(&quot;Array.prototype.includes&quot;, function (a) { return a ? a : function (b, c) { var d = this; d instanceof String &amp;&amp; (d = String(d)); var e = d.length; c = c || 0; for (0 &gt; c &amp;&amp; (c = Math.max(c + e, 0)); c &lt; e; c++) { var f = d[c]; if (f === b || Object.is(f, b)) return !0 } return !1 } });
+  h(&quot;String.prototype.includes&quot;, function (a) { return a ? a : function (b, c) { return -1 !== ia(this, b, &quot;includes&quot;).indexOf(b, c || 0) } }); window.gapi = window.gapi || {}; window.gapi.K = (new Date).getTime();/*
+
+  Copyright The Closure Library Authors.
+  SPDX-License-Identifier: Apache-2.0
+*/
+  var n = this || self, p = &quot;closure_uid_&quot; + (1E9 * Math.random() &gt;&gt;&gt; 0), ka = 0, la = function (a, b) { function c() { } c.prototype = b.prototype; a.M = b.prototype; a.prototype = new c; a.prototype.constructor = a; a.L = function (d, e, f) { for (var k = Array(arguments.length - 2), m = 2; m &lt; arguments.length; m++)k[m - 2] = arguments[m]; return b.prototype[e].apply(d, k) } }, t = function (a) { return a }; function w(a, b) { if (Error.captureStackTrace) Error.captureStackTrace(this, w); else { var c = Error().stack; c &amp;&amp; (this.stack = c) } a &amp;&amp; (this.message = String(a)); void 0 !== b &amp;&amp; (this.cause = b) } la(w, Error); w.prototype.name = &quot;CustomError&quot;; function y(a, b) { a = a.split(&quot;%s&quot;); for (var c = &quot;&quot;, d = a.length - 1, e = 0; e &lt; d; e++)c += a[e] + (e &lt; b.length ? b[e] : &quot;%s&quot;); w.call(this, c + a[d]) } la(y, w); y.prototype.name = &quot;AssertionError&quot;; var ma = function (a, b) { throw new y(&quot;Failure&quot; + (a ? &quot;: &quot; + a : &quot;&quot;), Array.prototype.slice.call(arguments, 1)); }; var z = function (a) { if (na !== na) throw Error(&quot;SafeUrl is not meant to be built directly&quot;); this.J = a }; z.prototype.toString = function () { return this.J.toString() }; var na = {}; new z(&quot;about:invalid#zClosurez&quot;); new z(&quot;about:blank&quot;); var oa = {}, pa = function () { if (oa !== oa) throw Error(&quot;SafeStyle is not meant to be built directly&quot;); this.H = &quot;&quot; }; pa.prototype.toString = function () { return this.H.toString() }; new pa; var qa = {}, ra = function () { if (qa !== qa) throw Error(&quot;SafeStyleSheet is not meant to be built directly&quot;); this.G = &quot;&quot; }; ra.prototype.toString = function () { return this.G.toString() }; new ra; var sa = {}, ta = function () { var a = n.trustedTypes &amp;&amp; n.trustedTypes.emptyHTML || &quot;&quot;; if (sa !== sa) throw Error(&quot;SafeHtml is not meant to be built directly&quot;); this.F = a }; ta.prototype.toString = function () { return this.F.toString() }; new ta; var B = function (a, b) { this.name = a; this.value = b }; B.prototype.toString = function () { return this.name }; var C = new B(&quot;OFF&quot;, Infinity), ua = new B(&quot;WARNING&quot;, 900), va = new B(&quot;CONFIG&quot;, 700), wa = function () { this.g = 0; this.clear() }, D; wa.prototype.clear = function () { this.l = Array(this.g); this.o = -1; this.s = !1 }; var G = function (a, b, c) { this.reset(a || C, b, c, void 0, void 0) }; G.prototype.reset = function () { };
+  var xa = function (a, b) { this.level = null; this.C = []; this.parent = (void 0 === b ? null : b) || null; this.children = []; this.D = { i: function () { return a } } }, ya = function (a) { if (a.level) return a.level; if (a.parent) return ya(a.parent); ma(&quot;Root logger has no level set.&quot;); return C }, za = function (a, b) { for (; a;)a.C.forEach(function (c) { c(b) }), a = a.parent }, Aa = function () { this.entries = {}; var a = new xa(&quot;&quot;); a.level = va; this.entries[&quot;&quot;] = a }, H, I = function (a, b) {
+    var c = a.entries[b]; if (c) return c; c = I(a, b.slice(0, Math.max(b.lastIndexOf(&quot;.&quot;), 0))); var d =
+      new xa(b, c); a.entries[b] = d; c.children.push(d); return d
+  }, J = function () { H || (H = new Aa); return H };/*
+
+  SPDX-License-Identifier: Apache-2.0
+*/
+  var Ba = [], Ca = function (a) { var b; if (b = I(J(), &quot;safevalues&quot;).D) { var c = &quot;A URL with content '&quot; + a + &quot;' was sanitized away.&quot;, d = ua; if (a = b) if (a = b &amp;&amp; d) { a = d.value; var e = b ? ya(I(J(), b.i())) : C; a = a &gt;= e.value } if (a) { d = d || C; a = I(J(), b.i()); &quot;function&quot; === typeof c &amp;&amp; (c = c()); D || (D = new wa); e = D; b = b.i(); if (0 &lt; e.g) { var f = (e.o + 1) % e.g; e.o = f; e.s ? (e = e.l[f], e.reset(d, c, b), b = e) : (e.s = f == e.g - 1, b = e.l[f] = new G(d, c, b)) } else b = new G(d, c, b); za(a, b) } } }; -1 === Ba.indexOf(Ca) &amp;&amp; Ba.push(Ca);/*
+  gapi.loader.OBJECT_CREATE_TEST_OVERRIDE &amp;&amp;*/
+  var K = window, L = document, Da = K.location, Ea = function () { }, Fa = /\[native code\]/, M = function (a, b, c) { return a[b] = a[b] || c }, Ga = function (a) { a = a.sort(); for (var b = [], c = void 0, d = 0; d &lt; a.length; d++) { var e = a[d]; e != c &amp;&amp; b.push(e); c = e } return b }, N = function () { var a; if ((a = Object.create) &amp;&amp; Fa.test(a)) a = a(null); else { a = {}; for (var b in a) a[b] = void 0 } return a }, Q = M(K, &quot;gapi&quot;, {}); var R = {}; R = M(K, &quot;___jsl&quot;, N()); M(R, &quot;I&quot;, 0); M(R, &quot;hel&quot;, 10); var Ia = function () { var a = Da.href; if (R.dpo) var b = R.h; else { b = R.h; var c = RegExp(&quot;([#].*&amp;|[#])jsh=([^&amp;#]*)&quot;, &quot;g&quot;), d = RegExp(&quot;([?#].*&amp;|[?#])jsh=([^&amp;#]*)&quot;, &quot;g&quot;); if (a = a &amp;&amp; (c.exec(a) || d.exec(a))) try { b = decodeURIComponent(a[2]) } catch (e) { } } return b }, Ja = function (a) { var b = M(R, &quot;PQ&quot;, []); R.PQ = []; var c = b.length; if (0 === c) a(); else for (var d = 0, e = function () { ++d === c &amp;&amp; a() }, f = 0; f &lt; c; f++)b[f](e) }, S = function (a) { return M(M(R, &quot;H&quot;, N()), a, N()) }; var T = M(R, &quot;perf&quot;, N()), Ka = M(T, &quot;g&quot;, N()), La = M(T, &quot;i&quot;, N()); M(T, &quot;r&quot;, []); N(); N(); var Ma = function (a, b, c) { var d = T.r; &quot;function&quot; === typeof d ? d(a, b, c) : d.push([a, b, c]) }, U = function (a, b, c) { b &amp;&amp; 0 &lt; b.length &amp;&amp; (b = Na(b), c &amp;&amp; 0 &lt; c.length &amp;&amp; (b += &quot;___&quot; + Na(c)), 28 &lt; b.length &amp;&amp; (b = b.substr(0, 28) + (b.length - 28)), c = b, b = M(La, &quot;_p&quot;, N()), M(b, c, N())[a] = (new Date).getTime(), Ma(a, &quot;_p&quot;, c)) }, Na = function (a) { return a.join(&quot;__&quot;).replace(/\./g, &quot;_&quot;).replace(/\-/g, &quot;_&quot;).replace(/,/g, &quot;_&quot;) }; var Oa = N(), V = [], W = function (a) { throw Error(&quot;Bad hint: &quot; + a); }; V.push([&quot;jsl&quot;, function (a) { for (var b in a) if (Object.prototype.hasOwnProperty.call(a, b)) { var c = a[b]; &quot;object&quot; == typeof c ? R[b] = M(R, b, []).concat(c) : M(R, b, c) } if (b = a.u) a = M(R, &quot;us&quot;, []), a.push(b), (b = /^https:(.*)$/.exec(b)) &amp;&amp; a.push(&quot;http:&quot; + b[1]) }]); var Pa = /^(\/[a-zA-Z0-9_\-]+)+$/, Qa = [/\/amp\//, /\/amp$/, /^\/amp$/], Ra = /^[a-zA-Z0-9\-_\.,!]+$/, Sa = /^gapi\.loaded_[0-9]+$/, Ta = /^[a-zA-Z0-9,._-]+$/, Xa = function (a, b, c, d, e) {
+    var f = a.split(&quot;;&quot;), k = f.shift(), m = Oa[k], l = null; m ? l = m(f, b, c, d) : W(&quot;no hint processor for: &quot; + k); l || W(&quot;failed to generate load url&quot;); b = l; c = b.match(Ua); (d = b.match(Va)) &amp;&amp; 1 === d.length &amp;&amp; Wa.test(b) &amp;&amp; c &amp;&amp; 1 === c.length || W(&quot;failed sanity: &quot; + a); try {
+      a = &quot;?&quot;; if (e &amp;&amp; 0 &lt; e.length) {
+        c = b = 0; for (d = {}; c &lt; e.length;) {
+          var q = e[c++]; f = void 0; k = typeof q; f = &quot;object&quot; == k &amp;&amp; null !=
+            q || &quot;function&quot; == k ? &quot;o&quot; + (Object.prototype.hasOwnProperty.call(q, p) &amp;&amp; q[p] || (q[p] = ++ka)) : (typeof q).charAt(0) + q; Object.prototype.hasOwnProperty.call(d, f) || (d[f] = !0, e[b++] = q)
+        } e.length = b; l = l + &quot;?le=&quot; + e.join(&quot;,&quot;); a = &quot;&amp;&quot;
+      } if (R.rol) { var A = R.ol; A &amp;&amp; A.length &amp;&amp; (l = &quot;&quot; + l + a + &quot;ol=&quot; + A.length) }
+    } catch (ba) { } return l
+  }, $a = function (a, b, c, d) {
+    a = Ya(a); Sa.test(c) || W(&quot;invalid_callback&quot;); b = Za(b); d = d &amp;&amp; d.length ? Za(d) : null; var e = function (f) { return encodeURIComponent(f).replace(/%2C/g, &quot;,&quot;) }; return [encodeURIComponent(a.pathPrefix).replace(/%2C/g,
+      &quot;,&quot;).replace(/%2F/g, &quot;/&quot;), &quot;/k=&quot;, e(a.version), &quot;/m=&quot;, e(b), d ? &quot;/exm=&quot; + e(d) : &quot;&quot;, &quot;/rt=j/sv=1/d=1/ed=1&quot;, a.j ? &quot;/am=&quot; + e(a.j) : &quot;&quot;, a.v ? &quot;/rs=&quot; + e(a.v) : &quot;&quot;, a.A ? &quot;/t=&quot; + e(a.A) : &quot;&quot;, &quot;/cb=&quot;, e(c)].join(&quot;&quot;)
+  }, Ya = function (a) {
+    &quot;/&quot; !== a.charAt(0) &amp;&amp; W(&quot;relative path&quot;); for (var b = a.substring(1).split(&quot;/&quot;), c = []; b.length;) { a = b.shift(); if (!a.length || 0 == a.indexOf(&quot;.&quot;)) W(&quot;empty/relative directory&quot;); else if (0 &lt; a.indexOf(&quot;=&quot;)) { b.unshift(a); break } c.push(a) } a = {}; for (var d = 0, e = b.length; d &lt; e; ++d) {
+      var f = b[d].split(&quot;=&quot;), k = decodeURIComponent(f[0]), m =
+        decodeURIComponent(f[1]); 2 == f.length &amp;&amp; k &amp;&amp; m &amp;&amp; (a[k] = a[k] || m)
+    } b = &quot;/&quot; + c.join(&quot;/&quot;); Pa.test(b) || W(&quot;invalid_prefix&quot;); c = 0; for (d = Qa.length; c &lt; d; ++c)Qa[c].test(b) &amp;&amp; W(&quot;invalid_prefix&quot;); c = X(a, &quot;k&quot;, !0); d = X(a, &quot;am&quot;); e = X(a, &quot;rs&quot;); a = X(a, &quot;t&quot;); return { pathPrefix: b, version: c, j: d, v: e, A: a }
+  }, Za = function (a) { for (var b = [], c = 0, d = a.length; c &lt; d; ++c) { var e = a[c].replace(/\./g, &quot;_&quot;).replace(/-/g, &quot;_&quot;); Ta.test(e) &amp;&amp; b.push(e) } return b.join(&quot;,&quot;) }, X = function (a, b, c) { a = a[b]; !a &amp;&amp; c &amp;&amp; W(&quot;missing: &quot; + b); if (a) { if (Ra.test(a)) return a; W(&quot;invalid: &quot; + b) } return null },
+    Wa = /^https?:\/\/[a-z0-9_.-]+\.google(rs)?\.com(:\d+)?\/[a-zA-Z0-9_.,!=\-\/]+$/, Va = /\/cb=/g, Ua = /\/\//g; Oa.m = function (a, b, c, d) { (a = a[0]) || W(&quot;missing_hint&quot;); return &quot;https://apis.google.com&quot; + $a(a, b, c, d) }; var Y = decodeURI(&quot;%73cript&quot;), ab = /^[-+_0-9\/A-Za-z]+={0,2}$/, bb = function (a, b) { for (var c = [], d = 0; d &lt; a.length; ++d) { var e = a[d], f; if (f = e) { a: { for (f = 0; f &lt; b.length; f++)if (b[f] === e) break a; f = -1 } f = 0 &gt; f } f &amp;&amp; c.push(e) } return c }, cb = function () { var a = R.nonce; return void 0 !== a ? a &amp;&amp; a === String(a) &amp;&amp; a.match(ab) ? a : R.nonce = null : L.querySelector ? (a = L.querySelector(&quot;script[nonce]&quot;)) ? (a = a.nonce || a.getAttribute(&quot;nonce&quot;) || &quot;&quot;, a &amp;&amp; a === String(a) &amp;&amp; a.match(ab) ? R.nonce = a : R.nonce = null) : null : null }, eb = function (a) {
+      if (&quot;loading&quot; != L.readyState) db(a);
+      else { var b = cb(), c = &quot;&quot;; null !== b &amp;&amp; (c = ' nonce=&quot;' + b + '&quot;'); a = &quot;&lt;&quot; + Y + ' src=&quot;' + encodeURI(a) + '&quot;' + c + &quot;&gt;&lt;/&quot; + Y + &quot;&gt;&quot;; L.write(Z ? Z.createHTML(a) : a) }
+    }, db = function (a) { var b = L.createElement(Y); b.setAttribute(&quot;src&quot;, Z ? Z.createScriptURL(a) : a); a = cb(); null !== a &amp;&amp; b.setAttribute(&quot;nonce&quot;, a); b.async = &quot;true&quot;; (a = L.getElementsByTagName(Y)[0]) ? a.parentNode.insertBefore(b, a) : (L.head || L.body || L.documentElement).appendChild(b) }, gb = function (a, b, c) { fb(function () { var d = b === Ia() ? M(Q, &quot;_&quot;, N()) : N(); d = M(S(b), &quot;_&quot;, d); a(d) }, c) }, ib = function (a, b) {
+      var c =
+        b || {}; &quot;function&quot; == typeof b &amp;&amp; (c = {}, c.callback = b); var d = (b = c) &amp;&amp; b._c; if (d) for (var e = 0; e &lt; V.length; e++) { var f = V[e][0], k = V[e][1]; k &amp;&amp; Object.prototype.hasOwnProperty.call(d, f) &amp;&amp; k(d[f], a, b) } b = []; a ? b = a.split(&quot;:&quot;) : c.features &amp;&amp; (b = c.features); if (!(a = c.h) &amp;&amp; (a = Ia(), !a)) throw Error(&quot;Bad hint: !hint&quot;); hb(b || [], c, a)
+    }, hb = function (a, b, c) {
+      var d = !!R.glrp; a = Ga(a) || []; var e = b.callback, f = b.config, k = b.timeout, m = b.ontimeout, l = b.onerror, q = void 0; &quot;function&quot; == typeof l &amp;&amp; (q = l); var A = null, ba = !1; if (k &amp;&amp; !m || !k &amp;&amp; m) throw &quot;Timeout requires both the timeout parameter and ontimeout parameter to be set&quot;;
+      l = M(S(c), &quot;r&quot;, []).sort(); var ca = M(S(c), &quot;L&quot;, []).sort(), nb = R.le || [], O = [].concat(l), Ha = function (x, E) { if (ba) return 0; K.clearTimeout(A); ca.push.apply(ca, r); var F = ((Q || {}).config || {}).update; F ? F(f) : f &amp;&amp; M(R, &quot;cu&quot;, []).push(f); if (E) { U(&quot;me0&quot;, x, O); try { gb(E, c, q) } finally { U(&quot;me1&quot;, x, O) } } return 1 }; 0 &lt; k &amp;&amp; (A = K.setTimeout(function () { ba = !0; m() }, k)); var r = bb(a, ca); if (r.length) {
+        r = bb(a, l); var u = M(R, &quot;CP&quot;, []), v = u.length; u[v] = function (x) {
+          if (!x) return 0; U(&quot;ml1&quot;, r, O); var E = function (P) {
+            d || (u[v] = null); Ha(r, x) &amp;&amp; (d &amp;&amp; (u[v] = null), Ja(function () {
+              e &amp;&amp;
+                e(); P()
+            }))
+          }, F = function () { var P = u[v + 1]; P &amp;&amp; P() }; 0 &lt; v &amp;&amp; u[v - 1] ? u[v] = function () { E(F) } : E(F)
+        }; if (r.length) { var da = &quot;loaded_&quot; + R.I++; Q[da] = function (x) { u[v](x); Q[da] = null }; a = Xa(c, r, &quot;gapi.&quot; + da, l, nb); l.push.apply(l, r); U(&quot;ml0&quot;, r, O); b.sync || K.___gapisync ? eb(a) : db(a) } else u[v](Ea)
+      } else Ha(r) &amp;&amp; e &amp;&amp; e()
+    }, jb; var kb = null, lb = n.trustedTypes; if (lb &amp;&amp; lb.createPolicy) try { kb = lb.createPolicy(&quot;gapi#gapi&quot;, { createHTML: t, createScript: t, createScriptURL: t }) } catch (a) { n.console &amp;&amp; n.console.error(a.message) } jb = kb; var Z = jb; var fb = function (a, b) { if (R.hee &amp;&amp; 0 &lt; R.hel) try { return a() } catch (c) { b &amp;&amp; b(c), R.hel--, ib(&quot;debug_error&quot;, function () { try { window.___jsl.hefn(c) } catch (d) { throw c; } }) } else try { return a() } catch (c) { throw b &amp;&amp; b(c), c; } }; var mb = Q.load; mb &amp;&amp; M(R, &quot;ol&quot;, []).push(mb); Q.load = function (a, b) { return fb(function () { return ib(a, b) }) }; V.unshift([&quot;url&quot;, function (a, b, c) { !a || b &amp;&amp; &quot;&quot; !== b || !a.endsWith(&quot;.js&quot;) || (a = a.substring(0, a.length - 3), b = a.lastIndexOf(&quot;/&quot;) + 1, b &gt;= a.length || (a = a.substr(b).split(&quot;:&quot;).filter(function (d) { return ![&quot;api&quot;, &quot;platform&quot;].includes(d) }), c.features = a)) }]); Ka.bs0 = window.gapi._bs || (new Date).getTime(); Ma(&quot;bs0&quot;); Ka.bs1 = (new Date).getTime(); Ma(&quot;bs1&quot;); delete window.gapi._bs; window.gapi.load(&quot;&quot;, {
+      callback: window[&quot;gapi_onload&quot;], _c: {
+        url: &quot;https://apis.google.com/js/api.js&quot;, jsl: {
+          ci: {
+            &quot;oauth-flow&quot;: { authUrl: &quot;https://accounts.google.com/o/oauth2/auth&quot;, proxyUrl: &quot;https://accounts.google.com/o/oauth2/postmessageRelay&quot;, disableOpt: !0, idpIframeUrl: &quot;https://accounts.google.com/o/oauth2/iframe&quot;, usegapi: !1 }, debug: { reportExceptionRate: 1, forceIm: !1, rethrowException: !0, host: &quot;https://apis.google.com&quot; }, enableMultilogin: !0, &quot;googleapis.config&quot;: { auth: { useFirstPartyAuthV2: !0 }, root: &quot;https://content.googleapis.com&quot;, &quot;root-1p&quot;: &quot;https://clients6.google.com&quot; }, inline: { css: 1 },
+            disableRealtimeCallback: !1, drive_share: { skipInitCommand: !0 }, csi: { rate: .01 }, client: { cors: !1 }, signInDeprecation: { rate: 0 }, include_granted_scopes: !0, llang: &quot;en&quot;, iframes: {
+              youtube: { params: { location: [&quot;search&quot;, &quot;hash&quot;] }, url: &quot;:socialhost:/:session_prefix:_/widget/render/youtube?usegapi=1&quot;, methods: [&quot;scroll&quot;, &quot;openwindow&quot;] }, ytsubscribe: { url: &quot;https://www.youtube.com/subscribe_embed?usegapi=1&quot; }, plus_circle: { params: { url: &quot;&quot; }, url: &quot;:socialhost:/:session_prefix::se:_/widget/plus/circle?usegapi=1&quot; }, plus_share: {
+                params: { url: &quot;&quot; },
+                url: &quot;:socialhost:/:session_prefix::se:_/+1/sharebutton?plusShare=true&amp;usegapi=1&quot;
+              }, rbr_s: { params: { url: &quot;&quot; }, url: &quot;:socialhost:/:session_prefix::se:_/widget/render/recobarsimplescroller&quot; }, &quot;:source:&quot;: &quot;3p&quot;, playemm: { url: &quot;https://play.google.com/work/embedded/search?usegapi=1&amp;usegapi=1&quot; }, savetoandroidpay: { url: &quot;https://pay.google.com/gp/v/widget/save&quot; }, blogger: { params: { location: [&quot;search&quot;, &quot;hash&quot;] }, url: &quot;:socialhost:/:session_prefix:_/widget/render/blogger?usegapi=1&quot;, methods: [&quot;scroll&quot;, &quot;openwindow&quot;] }, evwidget: {
+                params: { url: &quot;&quot; },
+                url: &quot;:socialhost:/:session_prefix:_/events/widget?usegapi=1&quot;
+              }, partnersbadge: { url: &quot;https://www.gstatic.com/partners/badge/templates/badge.html?usegapi=1&quot; }, dataconnector: { url: &quot;https://dataconnector.corp.google.com/:session_prefix:ui/widgetview?usegapi=1&quot; }, surveyoptin: { url: &quot;https://www.google.com/shopping/customerreviews/optin?usegapi=1&quot; }, &quot;:socialhost:&quot;: &quot;https://apis.google.com&quot;, shortlists: { url: &quot;&quot; }, hangout: { url: &quot;https://talkgadget.google.com/:session_prefix:talkgadget/_/widget&quot; }, plus_followers: {
+                params: { url: &quot;&quot; },
+                url: &quot;:socialhost:/_/im/_/widget/render/plus/followers?usegapi=1&quot;
+              }, post: { params: { url: &quot;&quot; }, url: &quot;:socialhost:/:session_prefix::im_prefix:_/widget/render/post?usegapi=1&quot; }, signin: { params: { url: &quot;&quot; }, url: &quot;:socialhost:/:session_prefix:_/widget/render/signin?usegapi=1&quot;, methods: [&quot;onauth&quot;] }, rbr_i: { params: { url: &quot;&quot; }, url: &quot;:socialhost:/:session_prefix::se:_/widget/render/recobarinvitation&quot; }, share: { url: &quot;:socialhost:/:session_prefix::im_prefix:_/widget/render/share?usegapi=1&quot; }, plusone: {
+                params: { count: &quot;&quot;, size: &quot;&quot;, url: &quot;&quot; },
+                url: &quot;:socialhost:/:session_prefix::se:_/+1/fastbutton?usegapi=1&quot;
+              }, comments: { params: { location: [&quot;search&quot;, &quot;hash&quot;] }, url: &quot;:socialhost:/:session_prefix:_/widget/render/comments?usegapi=1&quot;, methods: [&quot;scroll&quot;, &quot;openwindow&quot;] }, &quot;:im_socialhost:&quot;: &quot;https://plus.googleapis.com&quot;, backdrop: { url: &quot;https://clients3.google.com/cast/chromecast/home/widget/backdrop?usegapi=1&quot; }, visibility: { params: { url: &quot;&quot; }, url: &quot;:socialhost:/:session_prefix:_/widget/render/visibility?usegapi=1&quot; }, autocomplete: { params: { url: &quot;&quot; }, url: &quot;:socialhost:/:session_prefix:_/widget/render/autocomplete&quot; },
+              &quot;:signuphost:&quot;: &quot;https://plus.google.com&quot;, ratingbadge: { url: &quot;https://www.google.com/shopping/customerreviews/badge?usegapi=1&quot; }, appcirclepicker: { url: &quot;:socialhost:/:session_prefix:_/widget/render/appcirclepicker&quot; }, follow: { url: &quot;:socialhost:/:session_prefix:_/widget/render/follow?usegapi=1&quot; }, community: { url: &quot;:ctx_socialhost:/:session_prefix::im_prefix:_/widget/render/community?usegapi=1&quot; }, sharetoclassroom: { url: &quot;https://classroom.google.com/sharewidget?usegapi=1&quot; }, ytshare: { params: { url: &quot;&quot; }, url: &quot;:socialhost:/:session_prefix:_/widget/render/ytshare?usegapi=1&quot; },
+              plus: { url: &quot;:socialhost:/:session_prefix:_/widget/render/badge?usegapi=1&quot; }, family_creation: { params: { url: &quot;&quot; }, url: &quot;https://families.google.com/webcreation?usegapi=1&amp;usegapi=1&quot; }, commentcount: { url: &quot;:socialhost:/:session_prefix:_/widget/render/commentcount?usegapi=1&quot; }, configurator: { url: &quot;:socialhost:/:session_prefix:_/plusbuttonconfigurator?usegapi=1&quot; }, zoomableimage: { url: &quot;https://ssl.gstatic.com/microscope/embed/&quot; }, appfinder: { url: &quot;https://workspace.google.com/:session_prefix:marketplace/appfinder?usegapi=1&quot; }, savetowallet: { url: &quot;https://pay.google.com/gp/v/widget/save&quot; },
+              person: { url: &quot;:socialhost:/:session_prefix:_/widget/render/person?usegapi=1&quot; }, savetodrive: { url: &quot;https://drive.google.com/savetodrivebutton?usegapi=1&quot;, methods: [&quot;save&quot;] }, page: { url: &quot;:socialhost:/:session_prefix:_/widget/render/page?usegapi=1&quot; }, card: { url: &quot;:socialhost:/:session_prefix:_/hovercard/card&quot; }
+            }
+          }, h: &quot;m;/_/scs/abc-static/_/js/k=gapi.lb.en.S9zOXUg9rrA.O/d=1/rs=AHpOoo-AXjUK4hNAaKzui0P9Fr9nG2_yZQ/m=__features__&quot;, u: &quot;https://apis.google.com/js/api.js&quot;, hee: !0, dpo: !1, le: [&quot;scs&quot;], glrp: false
+        }, platform: &quot;backdrop blogger comments commentcount community donation family_creation follow hangout health page partnersbadge person playemm playreview plus plusone post ratingbadge savetoandroidpay savetodrive savetowallet sharetoclassroom shortlists signin2 surveyoptin visibility youtube ytsubscribe zoomableimage&quot;.split(&quot; &quot;),
+        annotation: [&quot;interactivepost&quot;, &quot;recobar&quot;, &quot;signin2&quot;, &quot;autocomplete&quot;]
+      }
+    });
+}).call(this);
+/** END GAPI */
+
+window.dispatchEvent(
+  new CustomEvent(&quot;openppp:handler-ready&quot;, { detail: main })
+);        
+      </code></pre>
+    </main>
+  </body>
+</html>

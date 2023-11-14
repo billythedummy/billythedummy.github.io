@@ -70,11 +70,14 @@ button {
   border: none;
   cursor: pointer;
   outline: inherit;
+  color: inherit;
+  padding: 1em;
+  border-radius: 0.25em;
+  background-color: gray;
 }
 
 button:hover {
-  border-radius: 50%;
-  background-color: gray;
+  background-color: lightgray;
 }
 
 *:focus {
