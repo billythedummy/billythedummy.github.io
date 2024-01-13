@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <link href="/styles.css" type="text/css" rel="stylesheet" />
+    <link href="/posts/posts.css" type="text/css" rel="stylesheet" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/dark.min.css"
+    />
+    <script type="module">
+      import hljs from "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/es/highlight.min.js";
+      import rust from "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/es/languages/rust.min.js";
+      hljs.registerLanguage("rust", rust);
+      hljs.highlightAll();
+    </script>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, minimum-scale=1"
+    />
+    <title>Less-well-known Rust Tricks For The Advanced Beginner Part 1</title>
+    <!-- Matomo -->
+    <script>
+      var _paq = (window._paq = window._paq || []);
+      /* tracker methods like "setCustomDimension" should be called before "trackPageView" */
+      _paq.push(["trackPageView"]);
+      _paq.push(["enableLinkTracking"]);
+      (function () {
+        var u = "//blue-silence-6088.fly.dev/";
+        _paq.push(["setTrackerUrl", u + "matomo.php"]);
+        _paq.push(["setSiteId", "2"]);
+        var d = document,
+          g = d.createElement("script"),
+          s = d.getElementsByTagName("script")[0];
+        g.async = true;
+        g.src = u + "matomo.js";
+        s.parentNode.insertBefore(g, s);
+      })();
+    </script>
+    <!-- End Matomo Code -->
+  </head>
+  <body>
+    <a href="/"><h1>billythedummy's silly diary</h1></a>
+    <hr />
+    <main>
+      <h3 id="date-heading">2024/01/13</h3>
+      <h2>Less-well-known Rust Tricks For The Advanced Beginner Part 1</h2>
+      <h3 id="subheading">
+        TLDR: this post goes through the following 3 less-well-known (in my
+        opinion) tips/tricks in rust:
+        <ol>
+          <li>Iterating over <code>Result</code>s or <code>Option</code>s</li>
+          <li>
+            Using <code>Arc&lt;[T]&gt;</code> instead of
+            <code>Vec&lt;T&gt;</code> for readonly data
+          </li>
+          <li>Using newtypes to implement cheap checked operations</li>
+        </ol>
+      </h3>
+      <h3>
+        P.S. A part 2 is not confirmed, I intend to add continuations as and
+        when I feel like there are other noteworthy ones.
+      </h3>
+      <h4>1. Iterating over <code>Result</code>s or <code>Option</code>s</h4>
+      <p>
+        I originally had written a section about this but I realized the Rust By
+        Example book explains this in a much more concise manner, provides
+        detailed examples, and goes through several other cases beyond what I
+        had considered, so I'm just gonna be lazy and link to it instead
+        <a
+          href="https://doc.rust-lang.org/rust-by-example/error/iter_result.html#iterating-over-results"
+          target="_blank"
+          rel="noopener noreferrer"
+          >here</a
+        >.
+      </p>
+      <p>
+        Other noteworthy mentions not in the link are
+        <a
+          href="https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.try_fold"
+          target="_blank"
+          rel="noopener noreferrer"
+          ><code>try_fold()</code></a
+        >
+        and
+        <a
+          href="https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.try_for_each"
+          target="_blank"
+          rel="noopener noreferrer"
+          ><code>try_for_each()</code></a
+        >. In case the examples on the doc weren't clear, here's another toy
+        example that uses <code>try_fold()</code> to sum a sequence of
+        <code>i64</code>s if they're all unsigned, or return the first
+        encountered conversion error otherwise:
+      </p>
+      <pre class="language-rust"><code>
+pub fn convert_and_sum(inputs: &[i64]) -> Result&lt;u64, TryFromIntError&gt; {
+    inputs.iter().try_fold(0u64, |acc, x| {
+        let x_unsigned: u64 = (*x).try_into()?;
+        Ok(acc + x_unsigned)
+    })
+}
+      </code></pre>
+      <h4>
+        2. Using <code>Arc&lt;[T]&gt;</code> instead of
+        <code>Vec&lt;T&gt;</code> for readonly data
+      </h4>
+      <p>
+        If you have a readonly array of values that needs to be shared across
+        multiple threads, consider using an
+        <code>Arc&lt;[T]&gt;</code> instead of a <code>Vec</code>. This way,
+        when you need to send the data to another thread by cloning, you're only
+        performing an atomic reference count increment to clone the
+        <code>Arc</code>, as opposed to cloning a <code>Vec</code> which would
+        involve allocating memory for the new <code>Vec</code> then cloning
+        element-wise from the original <code>Vec</code> to the new
+        <code>Vec</code>.
+      </p>
+      <p>
+        <code>Arc&lt;[T]&gt;</code> implements
+        <code>From&lt;Vec&lt;T&gt;&gt;</code> so existing code that uses
+        <code>Vec</code> can be easily converted with a simple
+        <code>into()</code>. However, the implementation needs to allocate new
+        memory for the <code>Arc</code> since an <code>Arc</code>'s heap
+        allocation also contains the atomic reference counts, so it uses a
+        different amount of space from a <code>Vec</code>'s heap alllocation.
+      </p>
+      <p>
+        Apart from using a const array for static initializations, I'm not aware
+        of any other mitigations of this additional allocation. Another point
+        about this is that once
+        <code
+          ><a
+            href="https://doc.rust-lang.org/std/iter/trait.TrustedLen.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            >TrustedLenIterator</a
+          ></code
+        >
+        is stabilized in the future,
+        <code
+          ><a
+            href="https://doc.rust-lang.org/std/sync/struct.Arc.html#method.from_iter"
+            target="_blank"
+            rel="noopener noreferrer"
+            >Arc::from_iter()</a
+          ></code
+        >
+        will no longer use an intermediate <code>Vec</code>, making it efficient
+        to construct <code>Arc&lt;[T]&gt;</code> from not just
+        <code>Vec</code> but other trusted length iterators as well.
+      </p>
+      <p>
+        If you need to mutate the owned values behind the <code>Arc</code> (not
+        the same value shared across the other threads as you would with a
+        <code>Arc&lt;Mutex&gt;</code> or <code>Arc&lt;RwLock&gt;</code>), you
+        can always use
+        <code
+          ><a
+            href="https://doc.rust-lang.org/std/sync/struct.Arc.html#method.make_mut"
+            target="_blank"
+            rel="noopener noreferrer"
+            >Arc::make_mut()</a
+          ></code
+        >
+        to make it clone on write.
+      </p>
+      <p>
+        Note that the cost of an atomic reference count increment/decrement may
+        actually be more expensive than just straight up cloning the
+        <code>Vec</code> in some cases e.g. for a small number of elements or
+        because the cost of allocating new memory during
+        <code>vec.into()</code> is too great. As with all things perf, it's best
+        to benchmark to check your specific use-case.
+      </p>
+      <h4>3. Using newtypes to implement cheap checked operations</h4>
+      <p>
+        Sometimes you're dealing with data that you need to perform some common
+        checks on before some operations. Here's a simple example: let's say I'm
+        receiving a packet of bytes over the network that's supposed to be cast
+        into the following struct:
+      </p>
+      <pre class="language-rust"><code>
+pub struct DetailedPoint {
+    pub magic: u8,
+    pub x: f64,
+    pub y: f64,
+    ...many other fields
+}
+
+impl DetailedPoint {
+    pub const SERIALIZED_LEN: usize = ...some fixed length...;
+}
+      </code></pre>
+      <p>
+        Where <code>magic</code> is the first byte of the packet and indicates
+        that the packet represents a <code>DetailedPoint</code> only when it's
+        of the specific value <code>0xAF</code>. Lets say that my current
+        use-case is to calculate the magnitude of the point, which I only need
+        the <code>x</code> and <code>y</code> fields for.
+      </p>
+      <pre class="language-rust"><code>
+pub fn magnitude(packet: &[u8]) -> Result&lt;f64, CustomError&gt; {
+    // return sqrt(x^2 + y^2) after checking
+    // packet is a valid DetailedPoint
+}
+      </code></pre>
+      <p>
+        Let's also say that the struct is serialized little-endian packed into
+        the network packet, so
+        <code>magic</code> is at offset 0, <code>x</code> is at offset 1 and
+        <code>y</code> is at offset 9.
+      </p>
+      <p>
+        Since the struct is big and has many other unneeded fields, I don't want
+        to deserialize the entire thing. However, I do need to check that the
+        <code>magic</code> byte is indeed <code>0xAF</code> and that the slice
+        length is correct before attempting to read <code>x</code> and
+        <code>y</code>. It might be obvious to write something like this as a
+        first-pass:
+      </p>
+      <pre class="language-rust"><code>
+pub fn is_valid_detailed_point(packet: &[u8]) -> bool {
+    packet.len() == DetailedPoint::SERIALIZED_LEN && packet[0] == 0xAF
+}
+
+fn deser_le_f64_unchecked(packet: &[u8], offset: usize) -> f64 {
+    let subslice: &[u8; 8] = &packet[offset..offset + 8].try_into().unwrap();
+    f64::from_le_bytes(*subslice)
+}
+
+pub fn x_checked(packet: &[u8]) -> Resul&lt;f64, CustomError&gt; {
+    if !is_valid_detailed_point(packet) {
+        return Err(CustomError);
+    }
+    Ok(deser_le_f64_unchecked(packet, 1))
+}
+
+pub fn y_checked(packet: &[u8]) -> Resul&lt;f64, CustomError&gt; {
+    if !is_valid_detailed_point(packet) {
+        return Err(CustomError);
+    }
+    Ok(deser_le_f64_unchecked(packet, 9))
+}
+      </code></pre>
+      <p>and the completed consumer function:</p>
+      <pre class="language-rust"><code>
+pub fn magnitude(packet: &[u8]) -> Result&lt;f64, CustomError&gt; {
+    let x = x_checked(packet)?;
+    let y = y_checked(packet)?;
+    Ok((x.powf(2.0) + y.powf(2.0)).sqrt())
+}
+      </code></pre>
+      <p>
+        However, this means that you perform a redundant
+        <code>is_valid_detailed_point()</code> check whenever you need to call
+        <code>x_checked()</code> or <code>y_checked()</code> more than once in
+        the same context, just as in the completed consumer function above.
+      </p>
+      <p>
+        What you can do instead is define a newtype that implements these
+        unsafe-without-checking operations. Then, make performing the check the
+        only way to create this newtype.
+      </p>
+      <pre class="language-rust"><code>
+pub fn is_valid_detailed_point(packet: &[u8]) -> bool {
+  packet.len() == DetailedPoint::SERIALIZED_LEN && packet[0] == 0xAF
+}
+
+fn deser_le_f64_unchecked(packet: &[u8], offset: usize) -> f64 {
+  let subslice: &[u8; 8] = &packet[offset..offset + 8].try_into().unwrap();
+  f64::from_le_bytes(*subslice)
+}
+
+pub struct CheckedDetailedPoint<'a>(&'a [u8]);
+
+impl<'a> CheckedDetailedPoint<'a> {
+    pub fn try_from_packet(packet: &'a [u8]) -> Result&lt;Self, CustomError&gt; {
+        if !is_valid_detailed_point(packet) {
+            return Err(CustomError);
+        }
+        Ok(Self(packet))
+    }
+
+    pub fn x(&self) -> f64 {
+        deser_le_f64_unchecked(self.0, 1)
+    }
+
+    pub fn y(&self) -> f64 {
+        deser_le_f64_unchecked(self.0, 9)
+    }
+}
+      </code></pre>
+      <p>and the completed consumer function:</p>
+      <pre class="language-rust"><code>
+pub fn magnitude(packet: &[u8]) -> Result&lt;f64, CustomError&gt; {
+    let checked = CheckedDetailedPoint::try_from_packet(packet)?;
+    Ok((checked.x().powf(2.0) + checked.y().powf(2.0)).sqrt())
+}
+      </code></pre>
+      <p>
+        This new version has no redundant checks. At compile-time, the type
+        system ensures that every call to <code>x()</code> and
+        <code>y()</code> must have been preceded by the required check in
+        <code>CheckedDetailedPoint::try_from_packet()</code> in the same
+        context. The newtype also incurs no additional memory cost as the binary
+        representation of <code>CheckedDetailedPoint</code> should be the same
+        as <code>&amp;[u8]</code>. This can be further ensured with a
+        <code>#[repr(transparent)]</code>.
+      </p>
+      <p>
+        The essence of this little tip can be seen throughout many rust
+        libraries in use-cases like adapters. An example most similar to the
+        simple example above is probably the
+        <code
+          ><a
+            href="https://docs.rs/bytemuck/latest/bytemuck/"
+            target="_blank"
+            rel="noopener noreferrer"
+            >bytemuck</a
+          ></code
+        >
+        crate, where
+        <code
+          ><a
+            href="https://docs.rs/bytemuck/latest/bytemuck/fn.try_from_bytes.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            >try_from_bytes()</a
+          ></code
+        >
+        transmutes a raw byte slice reference to a typed reference after
+        performing the required checks. While the application of this pattern
+        seems obvious in <code>bytemuck</code>'s case, it might not be so for
+        your use-cases. As a rule-of-thumb, it might be time to consider a
+        newtype when you find yourself calling the same checking code in
+        multiple places.
+      </p>
+      <p>That's all I have to share for now. Hope this helps!</p>
+    </main>
+  </body>
+</html>

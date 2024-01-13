@@ -6,6 +6,12 @@
         <language>en-us</language>
         <atom:link href="https://billythedummy.github.io/rss.xml" rel="self" type="application/rss+xml"/>
         <item>
+            <title>Less-well-known Rust Tricks For The Advanced Beginner Part 1</title>
+            <pubDate>Sat, 13 Jan 2024 00:00:00 GMT</pubDate>
+            <link>https://billythedummy.github.io/posts/rust-tricks-i.html</link>
+            <guid>https://billythedummy.github.io/posts/rust-tricks-i.html</guid>
+        </item>
+        <item>
             <title>Building an Expense Tracking OpenPPP Plugin</title>
             <pubDate>Tue, 14 Nov 2023 00:00:00 GMT</pubDate>
             <link>https://billythedummy.github.io/posts/openppp-receipt-plugin.html</link>
